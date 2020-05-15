@@ -1,0 +1,5 @@
+# TrailSigner Conceptual Model - Operations 
+
+--------------------------
+
+## 
