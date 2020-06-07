@@ -299,7 +299,7 @@ not mapped in the current regional db, but part of a longer route.
 
 ### stgOf
 
-- Assignment of stages to trips (containment)
+Assignment of stages to trips (containment)
 
 - TripRoute: foreign key
 - RouteStage: foreign key
@@ -338,27 +338,153 @@ according to cluster type translation to table schema.
 Logical facility management part: trail signs dynamically composed of semantic relationships 
 of trail routes, nodes and locations.
 
-**TODO...**
-
 ### LocationSign
+
+A sign element declaration to show a location at its place, at one of the TrailNodes of that location.
+
+- atTrailNode: foreign key to TrailNode - where this sign is (/to be) placed
+- ofLocation: foreign key to Location - which location it refers to
+
+The compound key of LocationSign is made of the two attributes above. 
+
+Constraint for validity: 
+- the 2 attributes must refer to a valid Location-TrailNode assignment according to locAtTN.
 
 ### DestSign
 
+A generalization (cluster / disjoint union type) of LocationSign and RouteDestSign, without further attributes.
+
+- Key: foreign key of RouteDestSign OR LocationSign (depending on the actual type).
+
 ### RouteDestSign
+
+A sign element declaration to show a route destination sign at a trail node, 
+i.e. that a specified location is reachable from that node via a specified route in its direction.
+
+It is built up via structural recursion in the following way:
+If the route is direct, the routeDestSign refers to a LocationSign at the destination, to specify the exact TrailNode.
+
+- atTrailNode: foreign key to TrailNode - where this sign is (/to be) placed
+- viaNextRoute: foreign key to SimpleRoute - the route to be followed next
+- towardsNext: foreign key to DestSign - the sign which gives further information/direction 
+(either a LocationSign if arrived, or another RouteDestSign along the indicated route 
+if another route must be followed from a certain point towards the destination)
+- toLocation: foreign key to the destination Location - either derived iteratively via the towardsNext chaining, 
+or, optionally, specified explicitly and must be validated via a constraint.
+
+The compound key of RouteDestSign is made of the 3 attributes (atTrailNode, viaNextRoute, towardsNext).
+Note that the key will have a complex domain, since towardsNext has also a structurally recursive compound key.
+
+Constraints for validity: 
+- atTrailNode must be connected to a TrailSection contained by the SimpleRoute viaNextRoute.
+- towardsNext's atTrailNode must also be connected to a TrailSection of viaNextRoute.
+- atTrailNode must be followed by towardsNext's atTrailNode along viaNextRoute.
+- if toLocation is specified explicitly, it must be equal to towardsNext's toLocation/atLocation.
 
 ### SignTrkData
 
+The actually computed track data along the full path towards the destination, meant by a RouteDestSign.
+It is used for the actual implementation of the sign - to derive what to be displayed there.
+It is actually a materialized view over the current trail network setting.
+
+- ofRouteDestSign: foreign key to the RouteDestSign
+- DateTime: when this data was generated
+- Destination-related attributes (copied from Location):
+    - DestFullName: unique full name
+    - DestShortName: locally-referred, short name variant
+    - DestPoiFeaturePictos: list of pictograms of connected features (POI types)
+    - DestDefaultAltitude: altitude in meters, by default (optional)
+- viaNextRoute-related attributes (copied from SimpleRoute):
+    - Route_code: route identifier
+    - RouteFullName: simple route name (alt.key, default: concatenation of RouteBrandName, RouteRef and RouteDirectionSpec - 
+      or if RouteBrandName/RouteRef is empty, TrailMark and RouteDirectionSpec)
+    - RouteBrandName: the name of the larger brand / thematic network which this route forms or belongs to (e.g. Camino de Santiago)
+    - RouteRef: text, simple route number or acronym (e.g. E4/23, AT/12, etc.)
+    - RouteDirectionSpec: text referring to the direction/final destination of the trail (e.g. "northbound", "towards ...")
+    - Modality: hiking / ... 
+    - Network: lwn / rwn / nwn / iwn (local/regional/national/international)
+    - Trailmark: the mark acronym of this trail
+- Track(path)-related attributes (aggregated via the towardsNext signage chain):
+    - TrkGeom: geometry, derived by sections
+    - TechDiff: technical difficulty grade, computed by sections
+    - Length: computed by sections
+    - Ascent: computed by sections
+    - Descent: computed by sections
+    - WalkingTime: computed by sections
+
+Track(path) data here are not rounded, rounding is made when the sign is being implemented (to avoid cumulated rounding errors)
+
 ### RouteSign
+
+A sign element declaration to show the further direction of a route (without any destination written), 
+at one of the TrailNodes along that route.
+
+It is an additional type of sign for those intermediate junctions 
+where only the continuation of a route needs to be marked and no destinations named.
+
+- atTrailNode: foreign key to TrailNode - where this sign is (/to be) placed
+- ofRoute: foreign key to a Route - which route it refers to
+
+The compound key of RouteSign is made of the two attributes above. 
+
+Constraint for validity: 
+- atTrailNode must be connected to a TrailSection contained by the Route ofRoute.
 
 ### TrailSign
 
+A generalization (cluster / disjoint union type) of DestSign and RouteSign.
+This entity class is the subject of generative rule application (signpost logic).
+
+- Key: foreign key of DestSign OR RouteSign (depending on the actual type).
+- lastValidatedDate: when it was last validated against the trail network
+- isDirty: boolean - the dirty flag indicates whether the TrailSign is actual 
+(structurally-semantically validated against the current version of the trail network and its SignTrkData - if any - correct)
+
+Remark: if any changes occur in the trail network (GeoTrNet or RouLocNet), 
+all trail signs connected to the changed elements get the dirty flag as true.
+
 ### TrailSignRule
+
+A table of the rules of signpost logics. Each generative rule is implemented as a database function/procedure, 
+externally to this table. This collection is an explicit reference to them to make the sign implications traceable. 
+
+- RuleCode: the identifier of the rule in the signpost logics.
+- RuleName: a name of the rule (optional).
+- RuleFuncName: the database subroutine name (function/procedure) of the implemented rule.
+- Description: a textual description of the rule, what it actually does (optional).
 
 ### implies
 
-### SuggSign
+An implication relation: which rule implies which generated trail signs.
 
-### InvSign
+- byRule: foreign key to TrailSignRule
+- premiseSigns: foreign key array to TrailSigns as premises of the rule
+- impliedSign: foreign key of the generated (implied) sign by that rule.
+
+Note: may be merged into TrailSign/SuggestedSign/InvSign.
+
+### SuggestedSign
+
+A subtype of TrailSign, indicating its suggested status (and level) for implementation.
+It may be explicitly chosen, or generated via the rules of signpost logics (see the implies relation).
+
+- TrailSign: foreign key - which sign is suggested for implementation
+- DateTime: when this suggestion was added/generated
+- SLevel: suggested sign priority level (S_i) according to the signpost logic.
+- SReason: a textual description about the reason why this sign is planned (optional).
+
+Note: may be merged into TrailSign, keeping always the newest DateTime and lowest SLevel value.
+
+### InvalidSign
+
+- TrailSign: foreign key - which sign is suggested for implementation
+- DateTime: when this suggestion was added/generated
+- InvReason: a textual description about the reason why this sign is planned (optional).
+
+Note: may be merged into TrailSign, keeping always the newest DateTime. Invalid signs can be deleted 
+during a complete signage system validation and cleanup, if they are not actually implemented.
+If an invalid sign is implemented (was implemented and becomes invalid due to trail network changes),
+it must be kept until a proper resolution is made (removal / redesign / temporary condititon lifted).
 
 --------------------------
 
