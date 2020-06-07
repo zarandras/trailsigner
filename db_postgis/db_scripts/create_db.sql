@@ -8,6 +8,8 @@ CREATE EXTENSION btree_gist;
 
 -- ======== GeoTrNet SCHEMA ========
 
+-- Remark: types are immutable as new variants get new ids with the same natural key, only time_validity is updated.
+
 -- DROP TABLE trail_node;
 CREATE TABLE trail_node (
 	id serial PRIMARY KEY NOT NULL,
@@ -23,9 +25,9 @@ CREATE INDEX trail_node_geom_index ON trail_node USING gist (geom);
 CREATE INDEX trail_node_code_index ON trail_node (node_code);
 -- note: (same as old trail_node table, extended)
 
--- DROP TYPE trail_section_...;
+-- DROP TYPE ts_status_enum;
 CREATE TYPE ts_status_enum AS enum ('existing', 'planned', 'closed', 'tempClosed');
-;
+
 -- DROP TABLE trail_section;
 CREATE TABLE trail_section (
 	id serial PRIMARY KEY NOT NULL,
@@ -62,6 +64,8 @@ CREATE INDEX trail_section_code_index ON trail_section (section_code);
 -- TODO: add triggers to prevent invalid modifications (see conceptual model details)
 
 -- ======== RouLocNet SCHEMA ========
+
+-- Remark: types are immutable as new variants get new ids with the same natural key, only time_validity is updated.
 
 -- DROP TABLE location;
 CREATE TABLE location (
@@ -124,99 +128,105 @@ CREATE TABLE simple_route (
 
 -- ======== LogFM SCHEMA ========
 
--- DROP TABLE dest_sign;
-CREATE TABLE dest_sign (
+-- Note: The TrailSign subtypes are merged into one type, by partial cluster-combination and union approach
+-- and surrogate key introduction, keeping only the supertype since each instance of the subtypes is a member of the supertype
+
+-- DROP TYPE ts_status_enum;
+CREATE TYPE trail_sign_type_enum AS enum ('route_sign', 'route_dest_sign', 'location_sign');
+CREATE OR REPLACE FUNCTION is_dest_sign(trail_sign_type) RETURNS boolean
+    AS 'select $1 in (''route_dest_sign'', ''location_sign'')'
+    LANGUAGE SQL
+    IMMUTABLE
+    RETURNS NULL ON NULL INPUT;
+
+-- DROP TABLE trail_sign;
+CREATE TABLE trail_sign (
 	id serial PRIMARY KEY NOT NULL,
-    at_node_id int NOT NULL REFERENCES trail_node(id),
-	is_loc_sign bool NOT NULL DEFAULT false,
-
-	via_route_id int NULL REFERENCES trail_route(id),
-	towards_dest_sign_id int NULL REFERENCES dest_sign(id),
-
-    loc_sign_location_id NULL REFERENCES trail_location(id),
-
-    s_priority int NOT NULL DEFAULT 0
+    at_node_code varchar NOT NULL REFERENCES trail_node(node_code),
+    trail_sign_type trail_sign_type_enum,
+    via_rou_code varchar REFERENCES simple_route(rou_code) CHECK (via_rou_code IS NULL OR trail_sign_type != 'location_sign'),
+    to_loc_full_name varchar REFERENCES location(full_name) CHECK (to_loc_full_name IS NULL OR trail_sign_type != 'route_sign'),
+        -- or: if trail_sign_type = 'route_dest_sign' then defaulted to towards_next_rds_id . to_loc_full_name
+    tw_next_rds_id integer REFERENCES trail_sign(id) CHECK (tw_next_rds IS NOT NULL OR trail_sign_type != 'route_dest_sign'), -- foreign key to next DestSign
+    --UNIQUE (at_node_code, trail_sign_type, via_rou_code, to_loc_full_name, tw_next_rds), -- ensures uniqueness across the whole structure by induction
+    is_dirty boolean DEFAULT true,
+    is_invalid boolean DEFAULT false,
+    s_level integer DEFAULT 0, -- suggested sign priority level (S_i) according to the signpost logic.
+    status_reason text, -- suggestion or invalidity reason
+    status_set_at timestamp with time zone DEFAULT NOW(), -- suggestion or invalidity datetime
+    validated_at timestamp with time zone -- last validated (structurally verified and sign track data generated/updated)
 );
-CREATE INDEX dest_sign_node_idx ON dest_sign(at_node_id);
-CREATE INDEX dest_sign_route_idx ON dest_sign(via_route_id);
-CREATE INDEX dest_sign_towards_idx ON dest_sign(towards_dest_sign_id);
-CREATE INDEX dest_sign_s_priority_idx ON dest_sign(s_priority);
+CREATE INDEX trail_sign_node_idx ON trail_sign(at_node_code);
+CREATE INDEX trail_sign_route_idx ON trail_sign(via_route_code);
+CREATE INDEX trail_sign_to_loc_idx ON trail_sign(to_loc_full_name);
+CREATE INDEX trail_sign_towards_idx ON trail_sign(tw_next_rds_id);
+CREATE INDEX trail_sign_s_level_idx ON trail_sign(s_level);
 
--- TODO ...
+--TODO Further constraints for validity:
+-- at_node_code is along via_rou_code (if the latter is not null).
+-- (at_node_code, to_location) is in table locAtTN if trail_sign_type = 'location_sign'
+-- tw_next_rds_id.at_node_code is along via_rou_code (if the latter is not null) and is followed by this.at_node_code along that route.
+-- tw_next_rds_id.to_loc_full_name = this.to_loc_full_name (if both are not null).
 
---### TrailSign
-- Key: foreign key of DestSign OR RouteSign (depending on the actual type).
-- lastValidatedDate: when it was last validated against the trail network
-- isDirty: boolean - the dirty flag indicates whether the TrailSign is actual
-(structurally-semantically validated against the current version of the trail network and its SignTrkData - if any - correct)
-    --### SuggSign
-    --### InvSign
-- TrailSign: foreign key - which sign is suggested for implementation
-- DateTime: when this suggestion was added/generated
-- SLevel: suggested sign priority level (S_i) according to the signpost logic.
-- SReason/InvReason: a textual description about the reason why this sign is planned (optional).
---### RouteSign
-- atTrailNode: foreign key to TrailNode - where this sign is (/to be) placed
-- ofRoute: foreign key to a Route - which route it refers to
-key: both
---Constraint for validity:
--- atTrailNode must be connected to a TrailSection contained by the Route ofRoute.
---### DestSign
---### LocationSign
-- atTrailNode: foreign key to TrailNode - where this sign is (/to be) placed
-- ofLocation: foreign key to Location - which location it refers to
-key: both
---Constraint for validity:
--- the 2 attributes must refer to a valid Location-TrailNode assignment according to locAtTN.
---### RouteDestSign
-- atTrailNode: foreign key to TrailNode - where this sign is (/to be) placed
-- viaNextRoute: foreign key to SimpleRoute - the route to be followed next
-- towardsNext: foreign key to DestSign - the sign which gives further information/direction
-(either a LocationSign if arrived, or another RouteDestSign along the indicated route
-if another route must be followed from a certain point towards the destination)
-- toLocation: foreign key to the destination Location - either derived iteratively via the towardsNext chaining,
---Constraints for validity:
--- atTrailNode must be connected to a TrailSection contained by the SimpleRoute viaNextRoute.
--- towardsNext's atTrailNode must also be connected to a TrailSection of viaNextRoute.
--- atTrailNode must be followed by towardsNext's atTrailNode along viaNextRoute.
--- if toLocation is specified explicitly, it must be equal to towardsNext's toLocation/atLocation.
+-- DROP TABLE sign_trk_data;
+CREATE TABLE sign_trk_data (
+    trail_sign_id NOT NULL REFERENCES trail_sign(id),
+    generated_at timestamp with time zone NOT NULL DEFAULT NOW(),
 
---### SignTrkData
-- ofRouteDestSign: foreign key to the RouteDestSign
-- DateTime: when this data was generated
-- Destination-related attributes (copied from Location):
-    - DestFullName: unique full name
-    - DestShortName: locally-referred, short name variant
-    - DestPoiFeaturePictos: list of pictograms of connected features (POI types)
-    - DestDefaultAltitude: altitude in meters, by default (optional)
-- viaNextRoute-related attributes (copied from SimpleRoute):
-    - Route_code: route identifier
-    - RouteFullName: simple route name (alt.key, default: concatenation of RouteBrandName, RouteRef and RouteDirectionSpec -
-      or if RouteBrandName/RouteRef is empty, TrailMark and RouteDirectionSpec)
-    - RouteBrandName: the name of the larger brand / thematic network which this route forms or belongs to (e.g. Camino de Santiago)
-    - RouteRef: text, simple route number or acronym (e.g. E4/23, AT/12, etc.)
-    - RouteDirectionSpec: text referring to the direction/final destination of the trail (e.g. "northbound", "towards ...")
-    - Modality: hiking / ...
-    - Network: lwn / rwn / nwn / iwn (local/regional/national/international)
-    - Trailmark: the mark acronym of this trail
-- Track(path)-related attributes (aggregated via the towardsNext signage chain):
-    - TrkGeom: geometry, derived by sections
-    - TechDiff: technical difficulty grade, computed by sections
-    - Length: computed by sections
-    - Ascent: computed by sections
-    - Descent: computed by sections
-    - WalkingTime: computed by sections
+--- Destination-related attributes - NOT copied from Location, only referenced due to proper historization
+    to_location_id integer references location(id), -- NULL iff route_sign
+--        dest_full_name varchar(255) NULL, -- actual location key with time_validity
+--        dest_short_name varchar(32) NULL,
+--        dest_poi_feature_pictos text NULL,
+--        dest_default_altitute integer NULL,
 
---### TrailSignRule
-- RuleCode: the identifier of the rule in the signpost logics.
-- RuleName: a name of the rule (optional).
-- RuleFuncName: the database subroutine name (function/procedure) of the implemented rule.
-- Description: a textual description of the rule, what it actually does (optional).
+--- viaNextRoute-related attributes - NOT copied from SimpleRoute, only referenced due to proper historization
+    via_rou_id integer references simple_route(id), -- NULL iff location_sign
+--        rou_code varchar(255) NULL, -- actual simple_route key with time_validity
+--        rou_full_name: varchar NULL,
+--        rou_brandname varchar NULL,
+--        rou_ref varchar NULL,
+--        rou_dirspec varchar NULL,
+--        modality varchar NULL
+--        network varchar NULL,
+--        trailmark varchar NULL,
 
---### implies
-- byRule: foreign key to TrailSignRule
-- premiseSigns: foreign key array to TrailSigns as premises of the rule
-- impliedSign: foreign key of the generated (implied) sign by that rule.
+--- Track(path)-related attributes: -- NOT NULL iff route_dest_sign
+        trk_geom geometry(LINESTRINGZ, 4326) NULL,
+        tech_diff text NULL,
+        length integer NULL,
+        ascent integer NULL,
+        descent integer NULL,
+        wtime_fw integer NULL,
+);
+CREATE INDEX sign_trk_data_idx ON sign_trk_data(trail_sign_id);
+
+-- Note: in the original model and its fullest content, it applies only to route_dest_sign-s.
+--   It is extended for general trail_signs due to the practicality of storing the actual id (variant)
+--   of the location or route the sign refers to, in its current form at the time of signage validation.
+--   This will act as a basis for comparison when invalidity or track data is checked for implemented signs
+
+-- TODO: sign track data generation: ids added according to actually valid variants of locations/simple_routes,
+-- TODO: aggregated sign track data cumulated via the towardsNext signage chain,
+--  and summarized along the via_rou section btw trail_sign_id's at_node_code and tw_next_rds_id.trail_sign_id
+
+-- DROP TABLE trail_sign_rule;
+CREATE TABLE trail_sign_rule (
+    rule_code varchar(32) NOT NULL PRIMARY KEY,
+    rule_name text NULL,
+    rule_func_name varchar NOT NULL, -- function/procedure name of the implemented rule
+    description text NULL
+);
+
+-- TODO: implement rules as db functions/procedures and the whole implication process in general
+--    based on the adaptation of the old partial experimental implementations
+
+-- DROP TABLE tsr_implies;
+CREATE TABLE tsr_implies (
+    by_rule_code varchar NOT NULL REFERENCES trail_sign_rule(rule_code),
+    premise_trail_sign_ids integer[] NOT NULL --REFERENCES trail_sign(id) each
+    implied_trail_sign_id integer NOT NULL REFERENCES trail_sign(id)
+);
 
 -- ======== PhyFM SCHEMA ========
 
