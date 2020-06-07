@@ -419,6 +419,11 @@ It is actually a materialized view over the current trail network setting.
 
 Track(path) data here are not rounded, rounding is made when the sign is being implemented (to avoid cumulated rounding errors)
 
+Note: Destination- and viaNextRoute-related attributes can be directly referenced to their base types (without copying) if
+they are immutable and versioned properly. Copying the attributes may improve the aggregation performance, however.
+
+Note: SignTrkData may be extended to other sign types, filled in the appropriate sections of attributes (e.g for route, or location signs).
+
 ### RouteSign
 
 A sign element declaration to show the further direction of a route (without any destination written), 
@@ -442,8 +447,9 @@ This entity class is the subject of generative rule application (signpost logic)
 
 - Key: foreign key of DestSign OR RouteSign (depending on the actual type).
 - lastValidatedDate: when it was last validated against the trail network
-- isDirty: boolean - the dirty flag indicates whether the TrailSign is actual 
-(structurally-semantically validated against the current version of the trail network and its SignTrkData - if any - correct)
+- isDirty: boolean - the dirty flag indicates whether it needs validation (related network items changed)
+(not dirty if structurally-semantically validated against the current version of the trail network,
+ and its SignTrkData - if any - is correct)
 
 Remark: if any changes occur in the trail network (GeoTrNet or RouLocNet), 
 all trail signs connected to the changed elements get the dirty flag as true.
@@ -519,6 +525,13 @@ A physically implemented sign with its actual data.
 - User: who added this data
 - Plus all attributes from SuggSign, with SignTrkData, 
   including reference (foreign) key to check for updates.
+- lastValidatedDate: when it was last validated against the trail network
+- isDirty: boolean - the dirty flag indicates whether it needs validation (related network items changed)
+- isInvalid: last validation failed, sign must be removed/redesigned
+- invalidityReason: text describing the invalidity reason
+
+Note: invalid implemented signs should not be removed from db if they are fixed. Their sign boards will be set to nonexistent.
+A general db purge may remove them.
 
 ### pointsTo
 
@@ -540,8 +553,14 @@ or a destination sign generated twice for two routes following the same path)
 - DateTime: when this data was entered
 - User: who added this data
 - Reason: a description why this sign is not implemented
+- lastValidatedDate: when it was last validated against the trail network
+- isDirty: boolean - the dirty flag indicates whether it needs validation (related network items changed)
+- isInvalid: last validation failed, sign must be removed/redesigned
+- invalidityReason: text describing the invalidity reason
 
 Note: may be merged into SuggSign if version management is in LogFM.
+
+Note: an implicit sign may be removed from here if it must be implemented.
 
 ### Waymarking
 
@@ -560,6 +579,10 @@ without explicitly storing each waymark separately (c.f. TrailMarker).
 - Condition: good / fair / poor / nonexistent
 - StatusRemark: text describing any additional info
 - FileFolder: location of related photos or other documentation 
+- lastValidatedDate: when it was last validated against the trail network
+- isDirty: boolean - the dirty flag indicates whether it needs validation (related network items changed)
+- isInvalid: last validation failed, sign must be removed/redesigned
+- invalidityReason: text describing the invalidity reason
 
 ### TrailMarker
 
@@ -573,6 +596,10 @@ if it has a special type, condition or needs special treatment.
 - User: who added/modified this data
 - StatusRemark: text describing any info
 - FileFolder: location of related photos, design plans or other documentation 
+- lastValidatedDate: when it was last validated against the trail network
+- isDirty: boolean - the dirty flag indicates whether it needs validation (related network items changed)
+- isInvalid: last validation failed, sign must be removed/redesigned
+- invalidityReason: text describing the invalidity reason
 
 ### markOf
 
@@ -618,6 +645,10 @@ It is mounted on a guidepost (signpost).
 - Condition: good / fair / poor / nonexistent
 - StatusRemark: text describing any additional info
 - FileFolder: location of related photos, design plans or other documentation 
+- lastValidatedDate: when it was last validated against the trail network
+- isDirty: boolean - the dirty flag indicates whether it needs validation (related network items changed)
+- isInvalid: last validation failed, sign must be removed/redesigned
+- invalidityReason: text describing the invalidity reason
 
 ### InfoBoard
 
@@ -633,6 +664,10 @@ An info board is a complex board with possibly multiple information panels, some
 - Condition: good / fair / poor / nonexistent
 - StatusRemark: text describing any additional info
 - FileFolder: location of related photos, design plans or other documentation 
+- lastValidatedDate: when it was last validated against the trail network
+- isDirty: boolean - the dirty flag indicates whether it needs validation (related network items changed)
+- isInvalid: last validation failed, sign must be removed/redesigned
+- invalidityReason: text describing the invalidity reason
 
 ### rteInf
 
