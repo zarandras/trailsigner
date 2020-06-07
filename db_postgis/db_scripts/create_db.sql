@@ -143,25 +143,80 @@ CREATE INDEX dest_sign_towards_idx ON dest_sign(towards_dest_sign_id);
 CREATE INDEX dest_sign_s_priority_idx ON dest_sign(s_priority);
 
 -- TODO ...
---### LocationSign
-
---### DestSign
-
---### RouteDestSign
-
---### SignTrkData
-
---### RouteSign
 
 --### TrailSign
+- Key: foreign key of DestSign OR RouteSign (depending on the actual type).
+- lastValidatedDate: when it was last validated against the trail network
+- isDirty: boolean - the dirty flag indicates whether the TrailSign is actual
+(structurally-semantically validated against the current version of the trail network and its SignTrkData - if any - correct)
+    --### SuggSign
+    --### InvSign
+- TrailSign: foreign key - which sign is suggested for implementation
+- DateTime: when this suggestion was added/generated
+- SLevel: suggested sign priority level (S_i) according to the signpost logic.
+- SReason/InvReason: a textual description about the reason why this sign is planned (optional).
+--### RouteSign
+- atTrailNode: foreign key to TrailNode - where this sign is (/to be) placed
+- ofRoute: foreign key to a Route - which route it refers to
+key: both
+--Constraint for validity:
+-- atTrailNode must be connected to a TrailSection contained by the Route ofRoute.
+--### DestSign
+--### LocationSign
+- atTrailNode: foreign key to TrailNode - where this sign is (/to be) placed
+- ofLocation: foreign key to Location - which location it refers to
+key: both
+--Constraint for validity:
+-- the 2 attributes must refer to a valid Location-TrailNode assignment according to locAtTN.
+--### RouteDestSign
+- atTrailNode: foreign key to TrailNode - where this sign is (/to be) placed
+- viaNextRoute: foreign key to SimpleRoute - the route to be followed next
+- towardsNext: foreign key to DestSign - the sign which gives further information/direction
+(either a LocationSign if arrived, or another RouteDestSign along the indicated route
+if another route must be followed from a certain point towards the destination)
+- toLocation: foreign key to the destination Location - either derived iteratively via the towardsNext chaining,
+--Constraints for validity:
+-- atTrailNode must be connected to a TrailSection contained by the SimpleRoute viaNextRoute.
+-- towardsNext's atTrailNode must also be connected to a TrailSection of viaNextRoute.
+-- atTrailNode must be followed by towardsNext's atTrailNode along viaNextRoute.
+-- if toLocation is specified explicitly, it must be equal to towardsNext's toLocation/atLocation.
+
+--### SignTrkData
+- ofRouteDestSign: foreign key to the RouteDestSign
+- DateTime: when this data was generated
+- Destination-related attributes (copied from Location):
+    - DestFullName: unique full name
+    - DestShortName: locally-referred, short name variant
+    - DestPoiFeaturePictos: list of pictograms of connected features (POI types)
+    - DestDefaultAltitude: altitude in meters, by default (optional)
+- viaNextRoute-related attributes (copied from SimpleRoute):
+    - Route_code: route identifier
+    - RouteFullName: simple route name (alt.key, default: concatenation of RouteBrandName, RouteRef and RouteDirectionSpec -
+      or if RouteBrandName/RouteRef is empty, TrailMark and RouteDirectionSpec)
+    - RouteBrandName: the name of the larger brand / thematic network which this route forms or belongs to (e.g. Camino de Santiago)
+    - RouteRef: text, simple route number or acronym (e.g. E4/23, AT/12, etc.)
+    - RouteDirectionSpec: text referring to the direction/final destination of the trail (e.g. "northbound", "towards ...")
+    - Modality: hiking / ...
+    - Network: lwn / rwn / nwn / iwn (local/regional/national/international)
+    - Trailmark: the mark acronym of this trail
+- Track(path)-related attributes (aggregated via the towardsNext signage chain):
+    - TrkGeom: geometry, derived by sections
+    - TechDiff: technical difficulty grade, computed by sections
+    - Length: computed by sections
+    - Ascent: computed by sections
+    - Descent: computed by sections
+    - WalkingTime: computed by sections
 
 --### TrailSignRule
+- RuleCode: the identifier of the rule in the signpost logics.
+- RuleName: a name of the rule (optional).
+- RuleFuncName: the database subroutine name (function/procedure) of the implemented rule.
+- Description: a textual description of the rule, what it actually does (optional).
 
 --### implies
-
---### SuggSign
-
---### InvSign
+- byRule: foreign key to TrailSignRule
+- premiseSigns: foreign key array to TrailSigns as premises of the rule
+- impliedSign: foreign key of the generated (implied) sign by that rule.
 
 -- ======== PhyFM SCHEMA ========
 

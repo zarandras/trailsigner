@@ -338,6 +338,9 @@ according to cluster type translation to table schema.
 Logical facility management part: trail signs dynamically composed of semantic relationships 
 of trail routes, nodes and locations.
 
+Note: with proper cluster composition, types RouteSign, DestSign (LocationSign, RouteDestSign) 
+may be combined into the general TrailSign type.
+
 ### LocationSign
 
 A sign element declaration to show a location at its place, at one of the TrailNodes of that location.
@@ -355,6 +358,8 @@ Constraint for validity:
 A generalization (cluster / disjoint union type) of LocationSign and RouteDestSign, without further attributes.
 
 - Key: foreign key of RouteDestSign OR LocationSign (depending on the actual type).
+
+Note: a proper cluster transformation method must be chosen for implementation.
 
 ### RouteDestSign
 
@@ -443,6 +448,8 @@ This entity class is the subject of generative rule application (signpost logic)
 Remark: if any changes occur in the trail network (GeoTrNet or RouLocNet), 
 all trail signs connected to the changed elements get the dirty flag as true.
 
+Note: a proper cluster transformation method must be chosen for implementation.
+
 ### TrailSignRule
 
 A table of the rules of signpost logics. Each generative rule is implemented as a database function/procedure, 
@@ -461,7 +468,7 @@ An implication relation: which rule implies which generated trail signs.
 - premiseSigns: foreign key array to TrailSigns as premises of the rule
 - impliedSign: foreign key of the generated (implied) sign by that rule.
 
-Note: may be merged into TrailSign/SuggestedSign/InvSign.
+Note: may be merged into TrailSign/SuggestedSign/InvSign if only one implication is to be stored.
 
 ### SuggestedSign
 
@@ -474,6 +481,8 @@ It may be explicitly chosen, or generated via the rules of signpost logics (see 
 - SReason: a textual description about the reason why this sign is planned (optional).
 
 Note: may be merged into TrailSign, keeping always the newest DateTime and lowest SLevel value.
+Moreover, separate tables/views can be created for different SLevels, 
+and implementation is only possible for (currently) S0-level signs.
 
 ### InvalidSign
 
@@ -485,6 +494,9 @@ Note: may be merged into TrailSign, keeping always the newest DateTime. Invalid 
 during a complete signage system validation and cleanup, if they are not actually implemented.
 If an invalid sign is implemented (was implemented and becomes invalid due to trail network changes),
 it must be kept until a proper resolution is made (removal / redesign / temporary condititon lifted).
+
+Remark: If InvalidSign is merged into TrailSign, it can be mapped to the attributes of SuggestedSign, 
+since invalidity of a sign generally overrides it being suggested.  
 
 --------------------------
 
