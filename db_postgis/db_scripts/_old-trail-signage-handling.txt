@@ -1,0 +1,202 @@
+THIS DESCRIPTION was created for the first initial database project. It is copied from there and must be reviewed with the new concept. 
+
+---
+
+needed: all trails and sections in both directions
+invariant: if a sign is there, all subsequent junctions will be signed if trail is changed (trail(_section) ends or diverts to another trail section(*-with diff.marking?))
+
+direction_sign:
+direction_sign_id, location(x,y), is_destination_sign, next_direction_sign_id, next_trail_id, time_override_until_next_sign -> destination_id, is_dirty, is_invalid, invalidity_error_message
+(track_data_computed),(track_data_existing)
+is_existing, realization_priority, realization_reason, placement_angle, placement_face, placement_index...
+
+    properties referring the physical existence (with the existing summary data) and its needed realization of the sign (the latter with the actually computed new summary data):
+        is_existing: T/F
+        realization_priority: 0...3 (importance)
+        realization_reason: newly_planned_sign, sign_removed_repro_sign, network_changed_new_sign, network_changed_update_sign, network_changed_remove_sign, 
+            newly_generated_intermediate_sign, (newly_generated_recommended_sign)
+        placement_angle, placement_face, placement_index: the physical position at the location (azimuth, left/right/both, nr.among signs at location)
+    properties referring to the logical soundness of the sign, i.e. its validity in the system and the correctness of the computed summary data:
+        is_dirty: validity (soundness) need to be ckecked and the computed summary data needs to be recomputed (iteratively, starting from the non-dirty-next-signs)
+        is_invalid: the sign is broken, it must be corrected. If it is dirty as well, then it might be automatically recovered. If not dirty, it is primarily broken and needs user intervention 
+        inv_err_msg: error message (reason) if is_invalid
+
+    next_trail_id - if not given, it is assumed as dynamic (primarily direct line, or later as advanced: shortest path on network)
+    destination_id - can be computed from next_direction_sign_id
+    is_destination_sign - no continuation of signposting, we are at the destination
+
+sign_track_data:
+    destination_text
+    distance_text_rounded
+    time_text_rounded
+    track_remark_text
+    track_route_text
+    trailmarks_next (string list)
+    trailmarks_extension (string)
+    technical_difficulty
+    endurance_difficulty
+    distance_exact
+    time_exact
+    track_geometry
+
+    direction_sign_id
+    sign_track_data_status
+        (unique: last two)
+
+Computation
+    INSERT(location(xy), status, next_direction_sign_id):
+
+    destination_id := next_direction_sign_id.destination_id
+    track := concat(cut_out(next_trail_section, location, next_direction_sign.location), next_direction_sign.track)
+    track_data_summary_computed := next_direction_sign.track_data_summary_computed + track_data_summary_computed(cut_out(next_trail_section, location, next_direction_sign.location))
+        OR directly from next aggregated track data
+
+    track_data_summary computation:
+        (track is aggregated, i.e. concatenated)
+        (destination is taken from the second one)
+        distance & time is summed (but: rounding!)
+        technical difficulty is maxed
+        (endurance difficulty is recomputed from totals)
+        trail nr/marking is computed as the set intersection of both (leading) trail nrs/markings. If it is an empty set, a change (traverse) must be indicated, so that
+            the first (next_section) marking is kept as lead marking and the next_direction_sign marking is taken as marking extension with > arrow (option to choose if there are many). 
+            This way, subsequent changes in marking can be indicated as building up a string of route markings and > arrow signs.
+            This rule can be fine-tuned by not indicating any marking above 2 changes, and not indicating a change for a short section that is very small in its ratio to the whole track.
+
+    dir_angle computation:
+        the angle of the track relative to the north at the location point (azymuth)
+
+---------------------------
+
+Multiple insertion possibilities: (1-4. only for later improvement!)
+
+1. location, destination_id: shortest path calculated, everything is computed from it, next_direction_sign will be the next corresponding sign along the track (if any, or the dest.itself), 
+    and generate signs at all trail-changing junctions between the starting point and this next sign to destination.
+ 
+2. location, destination_id, along which trail: 
+    if destination is on trail, OK. If not, see if there is a sign along the trail pointing to the destination - compute directions for all and keep the overall shortest. 
+    If no sign is on trail to destination, go to shortest path above
+
+3. location, next_direction_sign_id:
+    compute shortest path (single trail_section?) btw the start and next_direction_sign location, and fill in the missing fields, generate signs at all trail-changing junctions in-between
+
+4. location, next_trail_id:
+    get the next signage(s) along trail (if any) and compute their data additionally here
+
+THE NORMAL, DEFAULT insertion FUNCTIONALITY:
+5. location, next_direction_sign_id, next_trail_id: 
+    if next_direction_sign is not on next_trail_id, act like nr.2., otherwise insert and see the Computation above
+
+
+6. location - nothing specific is inserted but (if it is a new location) all going-through signages enhanced:
+    if there is a direction_sign along any of the here going-through or ending trail(sections) before this place, look for its next_direction_sign and:
+        if it is on this trail before this point, do nothing (already detoured)
+        if it is on this trail after this point, add a direction_sign here and chain into it (refer to its next_direction_sign and change the next_direction_sign reference of the original to this new one here)
+        if it is not on this trail, repair and look if we still need to insert here
+
+GENERATE INTERMEDIATE SIGNS:
+    if there is any direction_sign between the location and the next_signpost location, and there is no direction_sign with the current signage at the location,
+        then add the current one to that sign in-between
+    if a sign is inserted to any location, look for if that location should be an intermediate sign location for any other signposts
+
+REPAIR:
+    a direction_sign is tested with all its subsequent direction_sign-s: are both locations on the next_trail_section, in the proper direction?
+    if not, look as nr.2. and update the first one pointing to the intermediate found, or generated (by moving to branch calling 1.)
+
+    if next_trail_section is missing, guess it if possible.
+ 
+---------------------------
+CHANGE MANAGEMENT:
+
+insertions handled as above
+
+deletions and modifications - everything should be re-generated.
+
+---------------------------
+
+repairing a chain:
+    ...
+
+actualizing signposts:
+    ...
+
+============================================================
+
+
+Only Routes but in both dirs, can be spaghetti
+arbitrary signpost locations (snapping-based edits and additions)
+pre-marked destination locations ("centroids")
+DB structure as above
+is_dirty & is_invalid flag, with errmsg
+Preset distance tolerance to determine point-on-line relation
+
+INIT/GLOBAL UPDATE FUNCTION:
+Insert all possible destination nois with names - as location-only signposts (location markers)
+
+FUNCTION FOR INSERT TRIGGER: (extendable for different variations later)
+Insert signpost, ld. fent, csak egyszeruen - start/kov.
+
+SELECTION FOR POSSIBLE NEXTs
+automatikusan mindent ami signage az útvonal mentén tovább van, distincttel, innen nezve legtavolabbit meghagyva.
+
+SELECTION FOR ON-GOING SIGNAGE:
+automatikusan mindent ami athalad ott, tehat mindent ami az utvonal menten korabban van es a nextje kesobb van
+tobb utvonalra nezve is mehet (de akkor a teljes pontossaghoz az kell, hogy distinctaljuk a geometriak tartalmaval is, tehat a vegig fonodok egynek szamitsanak, es aggreg.jelzes)
+
+FUNCTION FOR CHAIN INSERT:
+Insert into chain - befüzés, on-going kell legyen, csak a korabbit kell megadni, azt modositja, amugy mint side-chain / normal insert
+
+FUNCTION FOR SIDE-CHAIN INSERT:
+Insert along chain - nem befuzve insertal, on-going kell legyen, csak a korabbit kell megadni, azt masolja es a nextje ua.lesz
+
+SELECTION FOR all prevs recursively ???
+
+FUNCTION FOR DELETE TRIGGER: ???
+Delete from chain - kifuzes vagy ha elejen van torles, vagy ha vege, akkor is_invalid lesz minden - kell ???
+on delete cascade / do nothing ???
+    NO: referring ones become is_invalid and reffering ones as well
+
+FUNCTION FOR TRAIL/SECTION UPDATE/DELETE trigger:
+Modification - (re-)generate data - what if the network changes?
+    signposts become dirty along the trail and also their referenced ones
+  (later separately: update is_dirty signposts)
+    
+(    if no trail/section is deleted / merged / displaced - no problem, only data needs to be recomputed, 
+    if a trail/section is edited freely, signposts may break
+         the next sign may not remain on the trail
+         the current sign may not remain on the trail
+         neither may remain on the trail
+)
+
+FUNCTION FOR UPDATE TRIGGER:
+Modification - what if the signpost location changes?
+    becomes dirty and all its referring ones
+   (later separately: update is_dirty signposts)
+
+GLOBAL RECOVER FUNCTION - after modification transactions:
+update is_dirty signposts: iterate: recompute every data (might be is_invalid as well) where the next is not dirty (if it is a location marker, no problem, it will not modify any data), 
+            until no (is_dirty and not is_invalid) is found
+        if a signpost itself and its next is on the same (given) trail, recompute and clear is_dirty/is_invalid flag
+        if a signpost itself remains on trail but its next does not remain and is valid, becomes (directly)is_invalid (not is_dirty any more)  
+        if a signpost itself does not remain on trail but its next does remain and is valid, becomes (directly)is_invalid (not is_dirty any more)  
+        if a signpost itself and its next does not remain on its trail, becomes (referring-to-)is_invalid (stays is_dirty as well)
+        if a signpost's next is is_invalid, it becomes (referring-to-)is_invalid (stays is_dirty as well)
+
+repair is_invalid signposts: ? ...
+        currently by hand, the directly invalids (not is_dirty) must be corrected - they become is_dirty, and then global recover
+        
+
+--------
+
+GENERATE ROUTE TABLE / VIEW:
+    order destinations along the route(s) - can be connected
+
+GENERATE ROUTE-BASED SIGNPOSTING TABLE
+    group&order-by-location generate the signposts similarly on the above that are referring to that route
+
+GENERATE SIGNPOSTS AT LOCATION:
+    simple select and group-by route, order-by route,destination
+
+=================================
+
+realize signpots:
+    copy the computed track data to the existing track data
